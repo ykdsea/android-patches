@@ -1,0 +1,63 @@
+diff --git a/libbacktrace/Android.mk b/libbacktrace/Android.mk
+index 9588dd6..6680d33 100755
+--- a/libbacktrace/Android.mk
++++ b/libbacktrace/Android.mk
+@@ -45,6 +45,7 @@ libbacktrace_src_files := \
+ libbacktrace_shared_libraries_target := \
+ 	libcutils \
+ 	libgccdemangle \
++	libdebughelper \
+ 
+ libbacktrace_src_files += \
+ 	UnwindCurrent.cpp \
+@@ -53,6 +54,7 @@ libbacktrace_src_files += \
+ 
+ libbacktrace_c_includes := \
+ 	external/libunwind/include \
++	external/libdebughelper/  \
+ 
+ libbacktrace_shared_libraries := \
+ 	libunwind \
+@@ -90,6 +92,7 @@ libbacktrace_libc++_src_files := \
+ libbacktrace_libc++_shared_libraries_target := \
+ 	libcutils \
+ 	libgccdemangle \
++	libdebughelper \
+ 
+ libbacktrace_libc++_src_files += \
+ 	UnwindCurrent.cpp \
+@@ -98,6 +101,7 @@ libbacktrace_libc++_src_files += \
+ 
+ libbacktrace_libc++_c_includes := \
+ 	external/libunwind/include \
++	external/libdebughelper/  \
+ 
+ libbacktrace_libc++_shared_libraries := \
+ 	libunwind \
+diff --git a/libbacktrace/BacktraceThread.cpp b/libbacktrace/BacktraceThread.cpp
+index 439cc3b..fe7a2ec 100644
+--- a/libbacktrace/BacktraceThread.cpp
++++ b/libbacktrace/BacktraceThread.cpp
+@@ -107,6 +107,10 @@ ThreadEntry::~ThreadEntry() {
+   pthread_cond_destroy(&wait_cond_);
+ }
+ 
++#ifdef HAVE_ANDROID_OS
++#include "debughelper.h"
++#endif
++
+ void ThreadEntry::Wait(int value) {
+   timespec ts;
+   if (clock_gettime(CLOCK_MONOTONIC, &ts) == -1) {
+@@ -119,7 +123,10 @@ void ThreadEntry::Wait(int value) {
+   while (wait_value_ != value) {
+     int ret = pthread_cond_timedwait(&wait_cond_, &wait_mutex_, &ts);
+     if (ret != 0) {
+-      BACK_LOGW("pthread_cond_timedwait failed: %s", strerror(ret));
++      BACK_LOGW("pthread_cond_timedwait failed:(%d,%d) %s", pid_, tid_, strerror(ret));
++#ifdef HAVE_ANDROID_OS
++      DebugHelper::dumpAllKernelStack();
++#endif
+       break;
+     }
+   }

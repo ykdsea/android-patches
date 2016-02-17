@@ -1,0 +1,13 @@
+1, 建立脚本logdump.sh执行logcat命令：
+#!/system/bin/sh
+logcat -v time >> /data/logcat.log
+2, 在init.rc中建立service启动logdump.sh
+service dumplog /system/bin/logdump.sh           
+    class core                        
+    console                                        
+    user root                                                           
+    group log 
+这么写法的原因？
+
+直接启动logcat命令的话，信息不会输出到串口(如果是logcat重定向到文件就没问题了)，使用sh启动会继承sh的stdio设置。
+重定向到文件的话，会比打印到文件速度更快。毕竟tty是字符设备写入速度必然更慢。

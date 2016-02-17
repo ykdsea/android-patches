@@ -1,0 +1,142 @@
+diff --git a/services/surfaceflinger/Android.mk b/services/surfaceflinger/Android.mk
+index 8284bc2..ffed712 100644
+--- a/services/surfaceflinger/Android.mk
++++ b/services/surfaceflinger/Android.mk
+@@ -98,6 +98,9 @@ LOCAL_CFLAGS += -DSINGLE_EXTERNAL_DISPLAY_USE_FB1
+ endif
+ endif
+ 
++LOCAL_C_INCLUDES += external/libdebughelper/
++LOCAL_SHARED_LIBRARIES += libdebughelper
++
+ LOCAL_SHARED_LIBRARIES := \
+ 	libcutils \
+ 	liblog \
+@@ -135,6 +138,9 @@ LOCAL_SHARED_LIBRARIES := \
+ 	libutils \
+ 	libdl
+ 
++LOCAL_C_INCLUDES += external/libdebughelper/
++LOCAL_SHARED_LIBRARIES += libdebughelper
++
+ LOCAL_WHOLE_STATIC_LIBRARIES := libsigchain
+ 
+ LOCAL_MODULE:= surfaceflinger
+diff --git a/services/surfaceflinger/SurfaceFlinger.cpp b/services/surfaceflinger/SurfaceFlinger.cpp
+index bf9b34c..bdfb446 100644
+--- a/services/surfaceflinger/SurfaceFlinger.cpp
++++ b/services/surfaceflinger/SurfaceFlinger.cpp
+@@ -2931,6 +2931,36 @@ void SurfaceFlinger::logFrameStats() {
+     result.append(config);
+ }
+ 
++
++void SurfaceFlinger::debugDump(){
++    Colorizer colorizer(false);
++
++    /*
++     * Dump the visible layer list
++     */
++    const LayerVector& currentLayers = mCurrentState.layersSortedByZ;
++    const size_t count = currentLayers.size();
++    ALOGE("Visible layers (count = %zu)",count);
++    for (size_t i=0 ; i<count ; i++) {
++        String8* result = new String8();
++        const sp<Layer>& layer(currentLayers[i]);
++        layer->dump(*result, colorizer);
++	ALOGE("%s",result->string());
++	delete result;
++    }
++
++    //dump hwc state
++    {
++    String8* result = new String8();
++    ALOGE("HWC Compos state:");
++    HWComposer& hwc(getHwComposer());
++    hwc.dump(*result);
++    ALOGE("%s",result->string());
++    delete result;
++    }
++}
++
++
+ void SurfaceFlinger::dumpAllLocked(const Vector<String16>& args, size_t& index,
+         String8& result) const
+ {
+diff --git a/services/surfaceflinger/SurfaceFlinger.h b/services/surfaceflinger/SurfaceFlinger.h
+index 4ed0950..ce25dae 100644
+--- a/services/surfaceflinger/SurfaceFlinger.h
++++ b/services/surfaceflinger/SurfaceFlinger.h
+@@ -96,7 +96,8 @@ public:
+ 
+     SurfaceFlinger() ANDROID_API;
+ 
+-    // must be called before clients can connect
++    void debugDump() ANDROID_API;
++	// must be called before clients can connect
+     void init() ANDROID_API;
+ 
+     // starts SurfaceFlinger main loop in the current thread
+@@ -125,6 +126,7 @@ public:
+         DISPLAY_HEIGHT
+     };
+ 
++
+     // post an asynchronous message to the main thread
+     status_t postMessageAsync(const sp<MessageBase>& msg, nsecs_t reltime = 0, uint32_t flags = 0);
+ 
+diff --git a/services/surfaceflinger/main_surfaceflinger.cpp b/services/surfaceflinger/main_surfaceflinger.cpp
+index 90e3f7d..0d0af89 100644
+--- a/services/surfaceflinger/main_surfaceflinger.cpp
++++ b/services/surfaceflinger/main_surfaceflinger.cpp
+@@ -18,15 +18,34 @@
+ #include <sys/resource.h>
+ #endif
+ 
++
++#define LOG_TAG "SurfaceFlinger"
++#include "log/log.h"
+ #include <cutils/sched_policy.h>
+ #include <binder/IServiceManager.h>
+ #include <binder/IPCThreadState.h>
+ #include <binder/ProcessState.h>
+ #include <binder/IServiceManager.h>
+ #include "SurfaceFlinger.h"
++#include <stdio.h>
++#include <stdlib.h>
++#include <debughelper.h>
+ 
+ using namespace android;
+ 
++void watchGraphicUsage(void* data) {
++    long long maliMem = DebugHelper::getMaliMem();
++    long long ionMem = DebugHelper::getIonMem();
++    if(ionMem > 167772160) {
++	ALOGE("!!TOO MUCH MEM USED FOR GRAPHIC: mali(%lld), ion(%lld)", maliMem, ionMem);
++        DebugHelper::dumpIonUsage();
++        SurfaceFlinger* sf = (SurfaceFlinger*)data;
++        sf->debugDump();
++    }
++}
++
++
++
+ int main(int, char**) {
+     // When SF is launched in its own process, limit the number of
+     // binder threads to 4.
+@@ -51,8 +70,15 @@ int main(int, char**) {
+     sp<IServiceManager> sm(defaultServiceManager());
+     sm->addService(String16(SurfaceFlinger::getServiceName()), flinger, false);
+ 
++    DebugHelper* dbghelper = DebugHelper::getInstance();
++    dbghelper->enableCoreDump();
++//    dbghelper->createWatch(watchGraphicUsage, (void*)flinger.get(), 10000);
++//    dbghelper->startWatch();
++
+     // run in this thread
+     flinger->run();
+ 
++//    dbghelper->stopWatch();
++//    dbghelper->destroyWatch();
+     return 0;
+ }

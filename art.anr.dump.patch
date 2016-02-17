@@ -1,0 +1,105 @@
+diff --git a/runtime/Android.mk b/runtime/Android.mk
+index 84f2248..1aceaa2 100644
+--- a/runtime/Android.mk
++++ b/runtime/Android.mk
+@@ -427,6 +427,8 @@ $$(ENUM_OPERATOR_OUT_GEN): $$(GENERATED_SRC_DIR)/%_operator_out.cc : $(LOCAL_PAT
+   ifeq ($$(art_target_or_host),target)
+     LOCAL_SHARED_LIBRARIES += libcutils libdl libselinux libutils libsigchain
+     LOCAL_STATIC_LIBRARIES := libziparchive libz
++    LOCAL_C_INCLUDES += external/libdebughelper/
++    LOCAL_SHARED_LIBRARIES += libdebughelper
+   else # host
+     LOCAL_STATIC_LIBRARIES += libcutils libziparchive-host libz libutils
+     LOCAL_SHARED_LIBRARIES += libsigchain
+diff --git a/runtime/signal_catcher.cc b/runtime/signal_catcher.cc
+index 916e1e2..0a853bc 100644
+--- a/runtime/signal_catcher.cc
++++ b/runtime/signal_catcher.cc
+@@ -37,6 +37,10 @@
+ #include "thread_list.h"
+ #include "utils.h"
+ 
++#ifdef HAVE_ANDROID_OS
++#include "debughelper.h"
++#endif
++
+ namespace art {
+ 
+ static void DumpCmdLine(std::ostream& os) {
+@@ -61,6 +65,18 @@ static void DumpCmdLine(std::ostream& os) {
+ #endif
+ }
+ 
++#ifdef HAVE_ANDROID_OS
++void watchKernelBlock(void*) {
++    static int count = 0;
++    count ++;
++    ALOGE("-----------watchKernelBlock cbk (%d)  --------------", count);
++    DebugHelper::dumpKernelMemoryStat();
++    DebugHelper::dumpKernelBlockStat();
++    DebugHelper::dumpKernelActiveCpuStat();
++    ALOGE("-----------watchKernelBlock cbk  (%d) end--------------", count);
++}
++#endif
++
+ SignalCatcher::SignalCatcher(const std::string& stack_trace_file)
+     : stack_trace_file_(stack_trace_file),
+       lock_("SignalCatcher lock"),
+@@ -102,6 +118,13 @@ void SignalCatcher::Output(const std::string& s) {
+     return;
+   }
+ 
++#ifdef HAVE_ANDROID_OS
++    char filepath[64] = {0};
++    DebugHelper::getInstance()->buildTracesFilePath(filepath);
++    stack_trace_file_.assign(filepath);
++    LOG(ERROR)<<"Output to file "<<stack_trace_file_.c_str();
++#endif
++
+   ScopedThreadStateChange tsc(Thread::Current(), kWaitingForSignalCatcherOutput);
+   int fd = open(stack_trace_file_.c_str(), O_APPEND | O_CREAT | O_WRONLY, 0666);
+   if (fd == -1) {
+@@ -122,10 +145,31 @@ void SignalCatcher::Output(const std::string& s) {
+   }
+ }
+ 
++
+ void SignalCatcher::HandleSigQuit() {
+   Runtime* runtime = Runtime::Current();
+   ThreadList* thread_list = runtime->GetThreadList();
+ 
++#ifdef HAVE_ANDROID_OS
++     static bool bFirstTime = true;
++
++    LOG(ERROR) << "--- "<<getpid()<<" HandleSigQuit "<< DebugHelper::getInstance()->getTraceCount() <<"--------\n";
++
++    if (DebugHelper::isSystemServer()) {
++        if(bFirstTime == true)
++            DebugHelper::getInstance()->createWatch(watchKernelBlock, NULL, 15000);
++
++        //property_set("sys.debughelper.dump.binder", "true");
++        //DebugHelper::dumpKernelMemoryStat();
++        //DebugHelper::dumpIonUsage();
++        //DebugHelper::dumpKernelBlockStat();
++        //DebugHelper::dumpKernelActiveCpuStat();
++        //DebugHelper::dumpAllKernelStack();
++        DebugHelper::getInstance()->startWatch();
++    }
++    bFirstTime = false;
++#endif
++
+   // Grab exclusively the mutator lock, set state to Runnable without checking for a pending
+   // suspend request as we're going to suspend soon anyway. We set the state to Runnable to avoid
+   // giving away the mutator lock.
+@@ -164,6 +208,11 @@ void SignalCatcher::HandleSigQuit() {
+     self->RunCheckpointFunction();
+   }
+   Output(os.str());
++#ifdef HAVE_ANDROID_OS
++    if (DebugHelper::isSystemServer()) {
++            DebugHelper::getInstance()->stopWatch();
++    }
++#endif
+ }
+ 
+ void SignalCatcher::HandleSigUsr1() {
